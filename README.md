@@ -14,7 +14,7 @@
 
 ### Зависимости для серверного приложения
 
-Файл зависимостей серверного приложения ```server/build.gradle.kts```
+Файл зависимостей серверного приложения: ```server/build.gradle.kts```
 
 ```kotlin
 dependencies {
@@ -27,7 +27,8 @@ dependencies {
 ### Конфигурация для серверного приложения
 
 Ktor использует файл конфигурации HOCON для настройки своего базового поведения, такого как точка входа и порт развертывания.
-Файл конфигурации серверного приложения ```server/src/main/resources/application.conf```
+
+Файл конфигурации серверного приложения: ```server/src/main/resources/application.conf```
 
 ```koltin
 ktor {
@@ -42,7 +43,7 @@ ktor {
 
 ### Зависимости для клиентского проекта
 
-Клиентское приложение указывает две зависимости в файлу ```client/build.gradle.kts```
+Клиентское приложение указывает две зависимости в файле ```client/build.gradle.kts```
 
 ```kotlin
 dependencies {
@@ -51,5 +52,27 @@ dependencies {
 }
 ```
 
+## Эхо-сервер
+
+### Реализация эхо-сервера
+Служба “echo” принимает подключения к WebSocket, получает текстовое содержимое и отправляет его обратно клиенту.
+
+Файл: ```server/src/main/kotlin/com/jetbrains/handson/chat/server/Application.kt```
+
+```kotlin
+fun Application.module() {
+    install(WebSockets)
+    routing {
+        webSocket("/chat") {
+            send("You are connected!")
+            for(frame in incoming) {
+                frame as? Frame.Text ?: continue
+                val receivedText = frame.readText()
+                send("You said: $receivedText")
+            }
+        }
+    }
+}
+```
 
 This repository is the code corresponding to the hands-on lab [Creating a WebSocket Chat](https://ktor.io/docs/creating-web-socket-chat.html). 
