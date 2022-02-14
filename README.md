@@ -14,8 +14,12 @@
     * [Запуск](#запуск-эхо-сервера)
   * [Обмен сообщениями](#обмен-сообщениями)
     * [Моделирование соединений](#моделирование-соединений)
-    * [Реализация обработки соединений и распространения сообщений](#реализация-обработки-соединений-и-распространения-сообщений)     
-
+    * [Реализация обработки соединений и распространения сообщений](#реализация-обработки-соединений-и-распространения-сообщений)
+  * [Создание чат-клиента](#создание-чат-клиента)
+    * [Улучшение решения](#улучшение-решения)
+    * [Соединение](#соединение)
+  * [Результат](#результат)      
+___
 ## Конфигурация проекта
 
 ### Зависимости для серверного приложения
@@ -153,5 +157,108 @@ routing {
 |:-----:|:-----:|
 |![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/postman-user1.png)|![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/postman-user2.png)|
 
+## Создание чат-клиента
 
+Файл ```client/src/main/kotlin/com/jetbrains/handson/chat/client/ChatClient.kt```
+
+```kotlin
+import io.ktor.client.*
+import io.ktor.client.features.websocket.*
+import io.ktor.http.*
+import io.ktor.http.cio.websocket.*
+import io.ktor.util.*
+import kotlinx.coroutines.*
+
+fun main() {
+    val client = HttpClient {
+        install(WebSockets)
+    }
+    runBlocking {
+        client.webSocket(method = HttpMethod.Get, host = "127.0.0.1", port = 8080, path = "/chat") {
+            while(true) {
+                val othersMessage = incoming.receive() as? Frame.Text ?: continue
+                println(othersMessage.readText())
+                val myMessage = readLine()
+                if(myMessage != null) {
+                    send(myMessage)
+                }
+            }
+        }
+    }
+    client.close()
+    println("Connection closed. Goodbye!")
+}
+```
+
+Здесь мы сначала создаем ```HttpClient``` и настраиваем ```WebSocket``` плагин Ktor. Функции в Ktor, отвечающие за выполнение сетевых вызовов, используют механизм приостановки из сопрограмм Kotlin, поэтому мы заключаем наш сетевой код в ```runBlocking``` блок. Внутри обработчика WebSocket мы снова обрабатываем входящие сообщения и отправляем исходящие: игнорируем кадры, не содержащие текста, читаем входящий текст и отправляем пользовательский ввод на сервер.
+
+### Улучшение решения
+
+Лучшей структурой для нашего чат-клиента было бы разделение механизмов вывода и ввода сообщений, что позволило бы им работать одновременно: когда приходят новые сообщения, они печатаются немедленно, но наши пользователи по-прежнему могут начать составлять новое сообщение чата в любой момент.
+
+Добавим вызываемую функцию ```outputMessages()``` в ```ChatClient.kt```
+
+```kotlin
+suspend fun DefaultClientWebSocketSession.outputMessages() {
+    try {
+        for (message in incoming) {
+            message as? Frame.Text ?: continue
+            println(message.readText())
+        }
+    } catch (e: Exception) {
+        println("Error while receiving: " + e.localizedMessage)
+    }
+}
+```
+
+Поскольку функция работает в контексте a ```DefaultClientWebSocketSession```, мы определяем ```outputMessages()``` ее как функцию расширения типа. Также не забываем добавить ```suspend``` модификатор — потому что итерация по ```incoming``` каналу приостанавливает сопрограмму, пока нет доступных новых сообщений.
+
+Определим вторую функцию, которая позволяет пользователю вводить текст.
+
+```kotlin
+suspend fun DefaultClientWebSocketSession.inputMessages() {
+    while (true) {
+        val message = readLine() ?: ""
+        if (message.equals("exit", true)) return
+        try {
+            send(message)
+        } catch (e: Exception) {
+            println("Error while sending: " + e.localizedMessage)
+            return
+        }
+    }
+}
+```
+
+Еще раз определенная как приостанавливающая функция расширения на ```DefaultClientWebSocketSession```, единственной задачей этой функции является чтение текста из командной строки и отправка его на сервер или возврат, когда пользователь вводит ```exit```.
+
+### Соединение
+
+```kotlin
+fun main() {
+    val client = HttpClient {
+        install(WebSockets)
+    }
+    runBlocking {
+        client.webSocket(method = HttpMethod.Get, host = "127.0.0.1", port = 8080, path = "/chat") {
+            val messageOutputRoutine = launch { outputMessages() }
+            val userInputRoutine = launch { inputMessages() }
+
+            userInputRoutine.join() // Wait for completion; either "exit" or error
+            messageOutputRoutine.cancelAndJoin()
+        }
+    }
+    client.close()
+    println("Connection closed. Goodbye!")
+}
+```
+
+Эта новая реализация улучшает поведение нашего приложения: как только соединение с нашим чат-сервером установлено, мы используем ```launch``` функцию из библиотеки Kotlin Coroutines для запуска двух долго работающих функций ```outputMessages()``` и ```inputMessages()``` новой сопрограммы (без блокировки текущего потока). Функция запуска также возвращает ```Job``` объект для обоих из них, который мы используем, чтобы программа работала до тех пор, пока пользователь не введет ```exit``` или не столкнется с сетевой ошибкой при попытке отправить сообщение. После ```inputMessages()``` возврата мы отменяем выполнение ```outputMessages()``` функции и ```close``` клиента.
+
+## Результат
+
+| Add users | Chat session user 1 | Chat session user 2 |
+|:---------:|:-------------------:|:-------------------:|
+|![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/cmd-add-user.png)|![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/chat-user1.png)|![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/chat-user2.png)|
+___
 This repository is the code corresponding to the hands-on lab [Creating a WebSocket Chat](https://ktor.io/docs/creating-web-socket-chat.html). 
