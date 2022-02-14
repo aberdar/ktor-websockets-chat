@@ -91,5 +91,65 @@ fun Application.module() {
 
 ![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/postman-connect.png)
 
+## Обмен сообщениями
+
+### Моделирование соединений
+
+Ktor управляет соединением WebSocket с объектом типа ```DefaultWebSocketSession```, который содержит все необходимое для общения через WebSockets, включая каналы ```incoming``` и ```outgoing```, удобные методы для связи и многое другое. На данный момент мы можем упростить задачу назначения имен пользователей и просто дать каждому участнику автоматически сгенерированное имя пользователя на основе счетчика.
+
+Файл ```server/src/main/kotlin/com/jetbrains/handson/chat/server/Connection.kt```
+
+```kotlin
+import io.ktor.http.cio.websocket.*
+import java.util.concurrent.atomic.*
+
+class Connection(val session: DefaultWebSocketSession) {
+    companion object {
+        var lastId = AtomicInteger(0)
+    }
+    val name = "user${lastId.getAndIncrement()}"
+}
+```
+
+```AtomicInteger``` - потокобезопасная структура данных для счетчика. Это гарантирует, что два пользователя никогда не получат один и тот же идентификатор для своего имени пользователя, даже если два их объекта Connection создаются одновременно в разных потоках.
+
+### Реализация обработки соединений и распространения сообщений
+
+Настройте реализацию ```routing``` блока ```server/src/main/kotlin/com/jetbrains/handson/chat/server/Application.kt```
+
+```kotlin
+routing {
+    val connections = Collections.synchronizedSet<Connection?>(LinkedHashSet())
+    webSocket("/chat") {
+        println("Adding user!")
+        val thisConnection = Connection(this)
+        connections += thisConnection
+        try {
+            send("You are connected! There are ${connections.count()} users here.")
+            for (frame in incoming) {
+                frame as? Frame.Text ?: continue
+                val receivedText = frame.readText()
+                val textWithUsername = "[${thisConnection.name}]: $receivedText"
+                connections.forEach {
+                    it.session.send(textWithUsername)
+                }
+            }
+        } catch (e: Exception) {
+            println(e.localizedMessage)
+        } finally {
+            println("Removing $thisConnection!")
+            connections -= thisConnection
+        }
+    }
+}
+```
+
+Наш сервер теперь хранит (поточно-безопасную) коллекцию ```Connections```. Когда пользователь подключается, мы создаем его ```Connection объект``` (который также присваивает себе уникальное имя пользователя) и добавляем его в коллекцию. Затем мы приветствуем нашего пользователя и сообщаем ему, сколько пользователей в настоящее время подключаются. Когда мы получаем сообщение от пользователя, мы добавляем к нему префикс уникального имени, связанного с его ```Connection объектом```, и отправляем его всем активным в данный момент соединениям. Наконец, мы удаляем объект клиента ```Connection``` из нашей коллекции, когда соединение завершается — либо изящно, когда закрывается входящий канал, либо с помощью , ```Exception``` когда сетевое соединение между клиентом и сервером неожиданно прерывается.
+
+Первый пользователь:
+![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/postman-user1.png)
+
+Второй пользователь:
+![Alt-текст](https://github.com/aberdar/ktor-websockets-chat/blob/main/image/postman-user2.png)
 
 This repository is the code corresponding to the hands-on lab [Creating a WebSocket Chat](https://ktor.io/docs/creating-web-socket-chat.html). 
